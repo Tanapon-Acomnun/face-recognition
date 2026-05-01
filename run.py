@@ -1,6 +1,12 @@
 # run.py
 # Streamlit Cloud Ready RAF-DB Emotion Detection App
-# Hugging Face model download + Upload + Camera + MediaPipe Face Detection
+# Uses OpenCV Haar Cascade (lighter + deployment-friendly)
+# Features:
+# - Hugging Face model auto-download
+# - Upload image
+# - Webcam / Phone camera
+# - Face detection
+# - Emotion prediction
 
 import os
 import requests
@@ -11,8 +17,6 @@ from torchvision import transforms, models
 from PIL import Image
 import numpy as np
 import cv2
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
 
 
 # =========================
@@ -160,16 +164,9 @@ def load_emotion_model():
 @st.cache_resource
 def load_face_detector():
 
-    base_options = python.BaseOptions(
-        model_asset_path="blaze_face_short_range.tflite"
-    )
-
-    options = vision.FaceDetectorOptions(
-        base_options=base_options
-    )
-
-    detector = vision.FaceDetector.create_from_options(
-        options
+    detector = cv2.CascadeClassifier(
+        cv2.data.haarcascades +
+        "haarcascade_frontalface_default.xml"
     )
 
     return detector
@@ -209,38 +206,29 @@ def detect_and_crop_face(image):
         image.convert("RGB")
     )
 
-    img_cv = cv2.cvtColor(
+    gray = cv2.cvtColor(
         img_np,
-        cv2.COLOR_RGB2BGR
+        cv2.COLOR_RGB2GRAY
     )
 
-    rgb_frame = cv2.cvtColor(
-        img_cv,
-        cv2.COLOR_BGR2RGB
+    faces = face_detector.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(50, 50)
     )
 
-    results = face_detector.process(
-        rgb_frame
-    )
-
-    if not results.detections:
+    if len(faces) == 0:
         return None, None
 
-    detection = results.detections[0]
-
-    bbox = (
-        detection
-        .location_data
-        .relative_bounding_box
+    # Largest face
+    faces = sorted(
+        faces,
+        key=lambda x: x[2] * x[3],
+        reverse=True
     )
 
-    h, w, _ = img_cv.shape
-
-    x = max(0, int(bbox.xmin * w))
-    y = max(0, int(bbox.ymin * h))
-
-    width = int(bbox.width * w)
-    height = int(bbox.height * h)
+    x, y, w, h = faces[0]
 
     padding = 20
 
@@ -248,13 +236,13 @@ def detect_and_crop_face(image):
     y1 = max(0, y - padding)
 
     x2 = min(
-        w,
-        x + width + padding
+        img_np.shape[1],
+        x + w + padding
     )
 
     y2 = min(
-        h,
-        y + height + padding
+        img_np.shape[0],
+        y + h + padding
     )
 
     if x2 <= x1 or y2 <= y1:
@@ -383,18 +371,21 @@ if image is not None:
 
     else:
 
+        # Show original with box
         st.image(
             detected_img,
             caption="Detected Face",
             use_container_width=True
         )
 
+        # Show cropped face
         st.image(
             face_crop,
             caption="Face Crop Used for Prediction",
             use_container_width=True
         )
 
+        # Predict
         predicted_class, probabilities = (
             predict_emotion(face_crop)
         )
@@ -418,7 +409,7 @@ if image is not None:
             f"Confidence: {confidence:.2f}%"
         )
 
-        # SCORES
+        # ALL SCORES
         st.write(
             "### Emotion Confidence Scores"
         )
