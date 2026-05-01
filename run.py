@@ -165,16 +165,13 @@ def load_emotion_model():
 @st.cache_resource
 def load_face_detector():
 
-    return face_detection.FaceDetection(
+    # Use MediaPipe solutions namespace
+    mp_face_detection = mp.solutions.face_detection
+
+    return mp_face_detection.FaceDetection(
         model_selection=1,
         min_detection_confidence=0.5
     )
-
-
-model = load_emotion_model()
-
-face_detector = load_face_detector()
-
 
 # =========================
 # TRANSFORMS
