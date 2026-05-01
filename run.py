@@ -1,13 +1,14 @@
 # run.py
-# RAF-DB Emotion Detection App (Improved Real-World Version)
+# Streamlit Cloud Ready RAF-DB Emotion Detection App
 # Features:
+# - Hugging Face model auto-download
 # - Upload image
 # - Webcam / Phone camera
 # - MediaPipe face detection
 # - Face crop before prediction
-# - Better real-world performance
 
 import os
+import requests
 import streamlit as st
 import torch
 import torch.nn as nn
@@ -15,13 +16,20 @@ from torchvision import transforms, models
 from PIL import Image
 import numpy as np
 import cv2
-import mediapipe as mp
+from mediapipe.python.solutions import face_detection
 
 
 # =========================
 # CONFIG
 # =========================
 MODEL_PATH = "best_emotion_model.pth"
+
+# Hugging Face direct download link
+MODEL_URL = (
+    "https://huggingface.co/SoftSkinz/face-detector/resolve/main/"
+    "best_emotion_model.pth"
+)
+
 IMG_SIZE = 224
 NUM_CLASSES = 7
 
@@ -37,7 +45,7 @@ emotion_labels = [
 
 
 # =========================
-# PAGE CONFIG
+# STREAMLIT PAGE
 # =========================
 st.set_page_config(
     page_title="AI Emotion Detection",
@@ -45,11 +53,78 @@ st.set_page_config(
     layout="centered"
 )
 
+st.sidebar.info(
+    "RAF-DB Emotion Detection | Hugging Face + Streamlit Cloud"
+)
+
 
 # =========================
 # DEVICE
 # =========================
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
+
+
+# =========================
+# DOWNLOAD MODEL
+# =========================
+def download_model():
+
+    if not os.path.exists(MODEL_PATH):
+
+        st.info("Downloading model from Hugging Face...")
+
+        response = requests.get(
+            MODEL_URL,
+            stream=True
+        )
+
+        if response.status_code == 200:
+
+            total_size = int(
+                response.headers.get(
+                    "content-length",
+                    0
+                )
+            )
+
+            progress_bar = st.progress(0)
+
+            downloaded_size = 0
+
+            with open(MODEL_PATH, "wb") as f:
+
+                for chunk in response.iter_content(
+                    chunk_size=8192
+                ):
+
+                    if chunk:
+
+                        f.write(chunk)
+
+                        downloaded_size += len(chunk)
+
+                        if total_size > 0:
+                            progress = int(
+                                (downloaded_size / total_size) * 100
+                            )
+
+                            progress_bar.progress(
+                                min(progress, 100)
+                            )
+
+            st.success(
+                "Model downloaded successfully."
+            )
+
+        else:
+
+            st.error(
+                "Failed to download model from Hugging Face."
+            )
+
+            st.stop()
 
 
 # =========================
@@ -58,49 +133,59 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 @st.cache_resource
 def load_emotion_model():
 
-    if not os.path.exists(MODEL_PATH):
-        st.error(f"Model not found: {MODEL_PATH}")
-        st.stop()
+    download_model()
 
     model = models.resnet18(weights=None)
 
     model.fc = nn.Sequential(
         nn.Dropout(0.5),
-        nn.Linear(model.fc.in_features, NUM_CLASSES)
+        nn.Linear(
+            model.fc.in_features,
+            NUM_CLASSES
+        )
     )
 
     model.load_state_dict(
-        torch.load(MODEL_PATH, map_location=device)
+        torch.load(
+            MODEL_PATH,
+            map_location=device
+        )
     )
 
     model = model.to(device)
+
     model.eval()
 
     return model
 
 
 # =========================
-# LOAD MEDIAPIPE
+# FACE DETECTOR
 # =========================
 @st.cache_resource
 def load_face_detector():
-    mp_face_detection = mp.solutions.face_detection
-    return mp_face_detection.FaceDetection(
+
+    return face_detection.FaceDetection(
         model_selection=1,
         min_detection_confidence=0.5
     )
 
 
 model = load_emotion_model()
+
 face_detector = load_face_detector()
 
 
 # =========================
-# IMAGE TRANSFORM
+# TRANSFORMS
 # =========================
 transform = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.Resize(
+        (IMG_SIZE, IMG_SIZE)
+    ),
+
     transforms.ToTensor(),
+
     transforms.Normalize(
         mean=[0.485, 0.456, 0.406],
         std=[0.229, 0.224, 0.225]
@@ -113,41 +198,62 @@ transform = transforms.Compose([
 # =========================
 def detect_and_crop_face(image):
 
-    # PIL -> OpenCV
-    img_np = np.array(image.convert("RGB"))
-    img_cv = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+    img_np = np.array(
+        image.convert("RGB")
+    )
+
+    img_cv = cv2.cvtColor(
+        img_np,
+        cv2.COLOR_RGB2BGR
+    )
 
     results = face_detector.process(
-        cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
+        cv2.cvtColor(
+            img_cv,
+            cv2.COLOR_BGR2RGB
+        )
     )
 
     if not results.detections:
         return None, None
 
-    # Use first detected face
     detection = results.detections[0]
 
-    bbox = detection.location_data.relative_bounding_box
+    bbox = (
+        detection
+        .location_data
+        .relative_bounding_box
+    )
 
     h, w, _ = img_cv.shape
 
     x = max(0, int(bbox.xmin * w))
     y = max(0, int(bbox.ymin * h))
+
     width = int(bbox.width * w)
     height = int(bbox.height * h)
 
-    # Add padding
+    # Padding
     padding = 20
 
     x1 = max(0, x - padding)
     y1 = max(0, y - padding)
-    x2 = min(w, x + width + padding)
-    y2 = min(h, y + height + padding)
 
-    # Crop face
-    face_crop = img_np[y1:y2, x1:x2]
+    x2 = min(
+        w,
+        x + width + padding
+    )
 
-    # Draw rectangle for display
+    y2 = min(
+        h,
+        y + height + padding
+    )
+
+    face_crop = img_np[
+        y1:y2,
+        x1:x2
+    ]
+
     display_img = img_np.copy()
 
     cv2.rectangle(
@@ -158,7 +264,10 @@ def detect_and_crop_face(image):
         2
     )
 
-    return Image.fromarray(face_crop), Image.fromarray(display_img)
+    return (
+        Image.fromarray(face_crop),
+        Image.fromarray(display_img)
+    )
 
 
 # =========================
@@ -174,9 +283,14 @@ def predict_emotion(face_image):
 
         outputs = model(img_tensor)
 
-        probabilities = torch.softmax(outputs, dim=1)[0]
+        probabilities = torch.softmax(
+            outputs,
+            dim=1
+        )[0]
 
-        predicted_class = torch.argmax(probabilities).item()
+        predicted_class = torch.argmax(
+            probabilities
+        ).item()
 
     return predicted_class, probabilities
 
@@ -185,9 +299,10 @@ def predict_emotion(face_image):
 # UI
 # =========================
 st.title("😊 AI Emotion Detection App")
+
 st.write(
-    "This upgraded version detects and crops the face first "
-    "for better real-world emotion recognition."
+    "Upload an image or use your camera for "
+    "real-world face emotion detection."
 )
 
 
@@ -204,7 +319,7 @@ image = None
 
 
 # =========================
-# UPLOAD
+# UPLOAD IMAGE
 # =========================
 if input_mode == "Upload Image":
 
@@ -214,7 +329,9 @@ if input_mode == "Upload Image":
     )
 
     if uploaded_file:
-        image = Image.open(uploaded_file)
+        image = Image.open(
+            uploaded_file
+        )
 
 
 # =========================
@@ -227,7 +344,9 @@ elif input_mode == "Use Camera":
     )
 
     if camera_photo:
-        image = Image.open(camera_photo)
+        image = Image.open(
+            camera_photo
+        )
 
 
 # =========================
@@ -235,25 +354,27 @@ elif input_mode == "Use Camera":
 # =========================
 if image is not None:
 
-    # Detect face
-    face_crop, detected_img = detect_and_crop_face(image)
+    face_crop, detected_img = (
+        detect_and_crop_face(image)
+    )
 
     if face_crop is None:
 
         st.error(
-            "No face detected. Please upload a clearer face image."
+            "No face detected. "
+            "Please upload a clearer image."
         )
 
     else:
 
-        # Show detected face box
+        # Show face box
         st.image(
             detected_img,
             caption="Detected Face",
             use_container_width=True
         )
 
-        # Show cropped face
+        # Show crop
         st.image(
             face_crop,
             caption="Face Crop Used for Prediction",
@@ -261,32 +382,32 @@ if image is not None:
         )
 
         # Predict
-        predicted_class, probabilities = predict_emotion(
-            face_crop
+        predicted_class, probabilities = (
+            predict_emotion(face_crop)
         )
 
-        predicted_emotion = emotion_labels[
-            predicted_class
-        ]
+        predicted_emotion = (
+            emotion_labels[predicted_class]
+        )
 
         confidence = (
-            probabilities[predicted_class].item() * 100
+            probabilities[
+                predicted_class
+            ].item() * 100
         )
 
-        # =========================
         # RESULTS
-        # =========================
         st.subheader(
-            f"Predicted Emotion: {predicted_emotion}"
+            f"Predicted Emotion: "
+            f"{predicted_emotion}"
         )
 
         st.write(
-            f"Confidence: {confidence:.2f}%"
+            f"Confidence: "
+            f"{confidence:.2f}%"
         )
 
-        # =========================
         # ALL SCORES
-        # =========================
         st.write(
             "### Emotion Confidence Scores"
         )
@@ -295,10 +416,15 @@ if image is not None:
             emotion_labels
         ):
 
-            score = probabilities[i].item()
+            score = probabilities[
+                i
+            ].item()
 
-            st.progress(float(score))
+            st.progress(
+                float(score)
+            )
 
             st.write(
-                f"{emotion}: {score * 100:.2f}%"
+                f"{emotion}: "
+                f"{score * 100:.2f}%"
             )
