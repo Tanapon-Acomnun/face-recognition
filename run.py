@@ -11,7 +11,8 @@ from torchvision import transforms, models
 from PIL import Image
 import numpy as np
 import cv2
-import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
 
 # =========================
@@ -159,11 +160,16 @@ def load_emotion_model():
 @st.cache_resource
 def load_face_detector():
 
-    mp_face_detection = mp.solutions.face_detection
+    base_options = python.BaseOptions(
+        model_asset_path="blaze_face_short_range.tflite"
+    )
 
-    detector = mp_face_detection.FaceDetection(
-        model_selection=1,
-        min_detection_confidence=0.5
+    options = vision.FaceDetectorOptions(
+        base_options=base_options
+    )
+
+    detector = vision.FaceDetector.create_from_options(
+        options
     )
 
     return detector
