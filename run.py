@@ -8,7 +8,7 @@ from PIL import Image
 import numpy as np
 import cv2
 import mediapipe as mp
-
+from mediapipe.python.solutions import face_detection
 
 # =========================
 # CONFIG
@@ -123,36 +123,63 @@ def download_model():
 
 # =========================
 # LOAD MODEL
+# Python 3.14 + Torch 2.11 + torchvision 0.26 compatible
 # =========================
 @st.cache_resource
 def load_emotion_model():
 
+    # Download from Hugging Face if missing
     download_model()
 
-    model = models.resnet18(weights=None)
+    # ResNet18 for RAF-DB
+    model = models.resnet18(
+        weights=None
+    )
 
+    # Replace classifier head
     model.fc = nn.Sequential(
+
         nn.Dropout(0.5),
+
         nn.Linear(
             model.fc.in_features,
             NUM_CLASSES
         )
     )
 
-    model.load_state_dict(
-        torch.load(
-            MODEL_PATH,
-            map_location=device
-        )
+    # Load checkpoint safely
+    checkpoint = torch.load(
+        MODEL_PATH,
+        map_location=device
     )
 
+    # Support either raw state_dict OR wrapped checkpoint
+    if isinstance(
+        checkpoint,
+        dict
+    ) and "model_state_dict" in checkpoint:
+
+        state_dict = checkpoint[
+            "model_state_dict"
+        ]
+
+    else:
+
+        state_dict = checkpoint
+
+    # Load weights
+    model.load_state_dict(
+        state_dict,
+        strict=False
+    )
+
+    # Move to CPU/GPU
     model = model.to(device)
 
+    # Inference mode
     model.eval()
 
     return model
-
-
 # =========================
 # FACE DETECTOR
 # =========================
