@@ -206,53 +206,99 @@ def detect_and_crop_face(image):
         image.convert("RGB")
     )
 
-    gray = cv2.cvtColor(
+    # Convert for OpenCV
+    img_bgr = cv2.cvtColor(
         img_np,
-        cv2.COLOR_RGB2GRAY
+        cv2.COLOR_RGB2BGR
     )
 
+    gray = cv2.cvtColor(
+        img_bgr,
+        cv2.COLOR_BGR2GRAY
+    )
+
+    # Improve contrast for darker / blurry webcam images
+    gray = cv2.equalizeHist(gray)
+
+    # Multi-scale detection
     faces = face_detector.detectMultiScale(
         gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(50, 50)
+        scaleFactor=1.05,      # More sensitive
+        minNeighbors=3,        # Easier detection
+        minSize=(30, 30),      # Smaller faces
+        flags=cv2.CASCADE_SCALE_IMAGE
     )
+
+    # Retry on larger resized image if no face found
+    if len(faces) == 0:
+
+        enlarged = cv2.resize(
+            gray,
+            None,
+            fx=1.5,
+            fy=1.5
+        )
+
+        retry_faces = face_detector.detectMultiScale(
+            enlarged,
+            scaleFactor=1.05,
+            minNeighbors=3,
+            minSize=(30, 30)
+        )
+
+        if len(retry_faces) > 0:
+
+            # Scale coordinates back
+            faces = []
+
+            for (x, y, w, h) in retry_faces:
+
+                faces.append((
+                    int(x / 1.5),
+                    int(y / 1.5),
+                    int(w / 1.5),
+                    int(h / 1.5)
+                ))
 
     if len(faces) == 0:
         return None, None
 
-    # Largest face
+    # Choose largest detected face
     faces = sorted(
         faces,
-        key=lambda x: x[2] * x[3],
+        key=lambda f: f[2] * f[3],
         reverse=True
     )
 
     x, y, w, h = faces[0]
 
-    padding = 20
+    # More generous padding
+    padding_x = int(w * 0.25)
+    padding_y = int(h * 0.35)
 
-    x1 = max(0, x - padding)
-    y1 = max(0, y - padding)
+    x1 = max(0, x - padding_x)
+    y1 = max(0, y - padding_y)
 
     x2 = min(
         img_np.shape[1],
-        x + w + padding
+        x + w + padding_x
     )
 
     y2 = min(
         img_np.shape[0],
-        y + h + padding
+        y + h + padding_y
     )
 
     if x2 <= x1 or y2 <= y1:
         return None, None
 
+    # Crop face
     face_crop = img_np[
         y1:y2,
         x1:x2
     ]
 
+    # Draw box
     display_img = img_np.copy()
 
     cv2.rectangle(
@@ -260,7 +306,7 @@ def detect_and_crop_face(image):
         (x1, y1),
         (x2, y2),
         (0, 255, 0),
-        2
+        3
     )
 
     return (
