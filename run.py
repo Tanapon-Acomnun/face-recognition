@@ -1,11 +1,6 @@
 # run.py
 # Streamlit Cloud Ready RAF-DB Emotion Detection App
-# Features:
-# - Hugging Face model auto-download
-# - Upload image
-# - Webcam / Phone camera
-# - MediaPipe face detection
-# - Face crop before prediction
+# Hugging Face model download + Upload + Camera + MediaPipe Face Detection
 
 import os
 import requests
@@ -24,7 +19,6 @@ import mediapipe as mp
 # =========================
 MODEL_PATH = "best_emotion_model.pth"
 
-# Hugging Face direct download link
 MODEL_URL = (
     "https://huggingface.co/SoftSkinz/face-detector/resolve/main/"
     "best_emotion_model.pth"
@@ -73,14 +67,19 @@ def download_model():
 
     if not os.path.exists(MODEL_PATH):
 
-        st.info("Downloading model from Hugging Face...")
+        with st.spinner("Downloading model from Hugging Face..."):
 
-        response = requests.get(
-            MODEL_URL,
-            stream=True
-        )
+            response = requests.get(
+                MODEL_URL,
+                stream=True,
+                timeout=120
+            )
 
-        if response.status_code == 200:
+            if response.status_code != 200:
+                st.error(
+                    "Failed to download model from Hugging Face."
+                )
+                st.stop()
 
             total_size = int(
                 response.headers.get(
@@ -106,6 +105,7 @@ def download_model():
                         downloaded_size += len(chunk)
 
                         if total_size > 0:
+
                             progress = int(
                                 (downloaded_size / total_size) * 100
                             )
@@ -114,17 +114,11 @@ def download_model():
                                 min(progress, 100)
                             )
 
+            progress_bar.empty()
+
             st.success(
                 "Model downloaded successfully."
             )
-
-        else:
-
-            st.error(
-                "Failed to download model from Hugging Face."
-            )
-
-            st.stop()
 
 
 # =========================
@@ -160,21 +154,31 @@ def load_emotion_model():
 
 
 # =========================
-# FACE DETECTOR
+# LOAD FACE DETECTOR
 # =========================
 @st.cache_resource
 def load_face_detector():
 
-    # Use MediaPipe solutions namespace
     mp_face_detection = mp.solutions.face_detection
 
-    return mp_face_detection.FaceDetection(
+    detector = mp_face_detection.FaceDetection(
         model_selection=1,
         min_detection_confidence=0.5
     )
 
+    return detector
+
+
 # =========================
-# TRANSFORMS
+# LOAD RESOURCES
+# =========================
+model = load_emotion_model()
+
+face_detector = load_face_detector()
+
+
+# =========================
+# IMAGE TRANSFORM
 # =========================
 transform = transforms.Compose([
     transforms.Resize(
@@ -204,11 +208,13 @@ def detect_and_crop_face(image):
         cv2.COLOR_RGB2BGR
     )
 
+    rgb_frame = cv2.cvtColor(
+        img_cv,
+        cv2.COLOR_BGR2RGB
+    )
+
     results = face_detector.process(
-        cv2.cvtColor(
-            img_cv,
-            cv2.COLOR_BGR2RGB
-        )
+        rgb_frame
     )
 
     if not results.detections:
@@ -230,7 +236,6 @@ def detect_and_crop_face(image):
     width = int(bbox.width * w)
     height = int(bbox.height * h)
 
-    # Padding
     padding = 20
 
     x1 = max(0, x - padding)
@@ -245,6 +250,9 @@ def detect_and_crop_face(image):
         h,
         y + height + padding
     )
+
+    if x2 <= x1 or y2 <= y1:
+        return None, None
 
     face_crop = img_np[
         y1:y2,
@@ -268,7 +276,7 @@ def detect_and_crop_face(image):
 
 
 # =========================
-# PREDICTION
+# PREDICT EMOTION
 # =========================
 def predict_emotion(face_image):
 
@@ -298,25 +306,24 @@ def predict_emotion(face_image):
 st.title("😊 AI Emotion Detection App")
 
 st.write(
-    "Upload an image or use your camera for "
-    "real-world face emotion detection."
+    "Upload an image or use your camera "
+    "to detect emotions in real time."
 )
 
 
 # =========================
-# INPUT MODE
+# INPUT METHOD
 # =========================
 input_mode = st.radio(
     "Choose Input Method:",
     ["Upload Image", "Use Camera"]
 )
 
-
 image = None
 
 
 # =========================
-# UPLOAD IMAGE
+# FILE UPLOAD
 # =========================
 if input_mode == "Upload Image":
 
@@ -326,13 +333,14 @@ if input_mode == "Upload Image":
     )
 
     if uploaded_file:
+
         image = Image.open(
             uploaded_file
         )
 
 
 # =========================
-# CAMERA
+# CAMERA INPUT
 # =========================
 elif input_mode == "Use Camera":
 
@@ -341,44 +349,46 @@ elif input_mode == "Use Camera":
     )
 
     if camera_photo:
+
         image = Image.open(
             camera_photo
         )
 
 
 # =========================
-# PROCESS
+# PROCESS IMAGE
 # =========================
 if image is not None:
 
-    face_crop, detected_img = (
-        detect_and_crop_face(image)
-    )
+    with st.spinner(
+        "Detecting face and analyzing emotion..."
+    ):
+
+        face_crop, detected_img = (
+            detect_and_crop_face(image)
+        )
 
     if face_crop is None:
 
         st.error(
             "No face detected. "
-            "Please upload a clearer image."
+            "Please use a clearer face image."
         )
 
     else:
 
-        # Show face box
         st.image(
             detected_img,
             caption="Detected Face",
             use_container_width=True
         )
 
-        # Show crop
         st.image(
             face_crop,
             caption="Face Crop Used for Prediction",
             use_container_width=True
         )
 
-        # Predict
         predicted_class, probabilities = (
             predict_emotion(face_crop)
         )
@@ -393,18 +403,16 @@ if image is not None:
             ].item() * 100
         )
 
-        # RESULTS
+        # MAIN RESULT
         st.subheader(
-            f"Predicted Emotion: "
-            f"{predicted_emotion}"
+            f"Predicted Emotion: {predicted_emotion}"
         )
 
         st.write(
-            f"Confidence: "
-            f"{confidence:.2f}%"
+            f"Confidence: {confidence:.2f}%"
         )
 
-        # ALL SCORES
+        # SCORES
         st.write(
             "### Emotion Confidence Scores"
         )
@@ -413,15 +421,12 @@ if image is not None:
             emotion_labels
         ):
 
-            score = probabilities[
-                i
-            ].item()
+            score = probabilities[i].item()
+
+            st.write(
+                f"{emotion}: {score * 100:.2f}%"
+            )
 
             st.progress(
                 float(score)
-            )
-
-            st.write(
-                f"{emotion}: "
-                f"{score * 100:.2f}%"
             )
